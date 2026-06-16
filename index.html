@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+
+    <!-- PWA & Theme -->
+    <meta name="theme-color" content="#0a0e1a" />
+    <meta name="background-color" content="#0a0e1a" />
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- iOS PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Xaritsoccer" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+    <link rel="apple-touch-startup-image" href="/logo.png" />
+
+    <!-- Android -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Xaritsoccer" />
+
+    <!-- SEO & Social -->
+    <title>Xaritsoccer — FIFA World Cup</title>
+    <meta name="description" content="FIFA World Cup 2026 — Scores live, groupes, pronostics. L'app des Lions du Sénégal 🦁" />
+    <meta property="og:title" content="Xaritsoccer" />
+    <meta property="og:description" content="FIFA World Cup 2026 — L'app des Lions du Sénégal 🦁" />
+    <meta property="og:image" content="/logo.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+    <style>
+      /* Splash screen */
+      #splash {
+        position: fixed; inset: 0; background: #0a0e1a;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        z-index: 9999; transition: opacity 0.5s ease;
+      }
+      #splash img { width: 160px; height: 160px; object-fit: contain; animation: splashPulse 1s ease-in-out infinite alternate; }
+      #splash p { color: rgba(255,255,255,0.4); font-family: Inter, sans-serif; font-size: 12px; margin-top: 20px; letter-spacing: 2px; }
+      @keyframes splashPulse { from { transform: scale(0.95); opacity: 0.8; } to { transform: scale(1.05); opacity: 1; } }
+    </style>
+
+    <script>
+      // Register Service Worker
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('SW registered:', reg.scope))
+            .catch(err => console.log('SW error:', err));
+        });
+      }
+      // Hide splash after load
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          const splash = document.getElementById('splash');
+          if (splash) { splash.style.opacity = '0'; setTimeout(() => splash.remove(), 500); }
+        }, 1200);
+      });
+    </script>
+  </head>
+  <body>
+    <!-- Splash screen -->
+    <div id="splash">
+      <img src="/logo.png" alt="Xaritsoccer" />
+      <p>XARITSOCCER</p>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
