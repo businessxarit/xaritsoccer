@@ -174,108 +174,154 @@ const IC = {
 // LIVE DATA HOOK — worldcup2026 free API
 // ═══════════════════════════════════════════════════
 // ── API-Football via Netlify Function proxy (clé sécurisée côté serveur) ──
-const API_PROXY = "/.netlify/functions/api-football";
+const API_PROXY = "/api/football";
 
 function useLiveMatches() {
-  const [liveData, setLiveData] = useState({});
-  const [standings, setStandings] = useState({});
-  const [scorers, setScorers] = useState([]);
-  const [apiOnline, setApiOnline] = useState(false);
+  const [liveData, setLiveData]     = useState({});
+  const [standings, setStandings]   = useState({});
+  const [scorers, setScorers]       = useState([]);
+  const [apiOnline, setApiOnline]   = useState(false);
 
-  const callProxy = useCallback(async (endpoint, params = {}) => {
-    const qs = new URLSearchParams({ endpoint, ...params }).toString();
-    const res = await fetch(`${API_PROXY}?${qs}`);
-    if (!res.ok) throw new Error("proxy error");
-    return res.json();
-  }, []);
+  // Correspondance noms API → noms dans ton app
+  const TEAM_MAP = {
+    "Senegal":            "Senegal",
+    "France":             "France",
+    "Norway":             "Norway",
+    "Iraq":               "Iraq",
+    "United States":      "USA",
+    "Mexico":             "Mexico",
+    "South Africa":       "South Africa",
+    "South Korea":        "South Korea",
+    "Czechia":            "Czech Rep.",
+    "Bosnia and Herzegovina": "Bosnia-Herz.",
+    "Canada":             "Canada",
+    "Switzerland":        "Switzerland",
+    "Brazil":             "Brazil",
+    "Morocco":            "Morocco",
+    "Scotland":           "Scotland",
+    "Haiti":              "Haiti",
+    "Australia":          "Australia",
+    "Turkey":             "Turkey",
+    "Paraguay":           "Paraguay",
+    "Germany":            "Germany",
+    "Ecuador":            "Ecuador",
+    "Ivory Coast":        "Ivory Coast",
+    "Curaçao":            "Curaçao",
+    "Netherlands":        "Netherlands",
+    "Japan":              "Japan",
+    "Tunisia":            "Tunisia",
+    "Sweden":             "Sweden",
+    "Belgium":            "Belgium",
+    "Iran":               "Iran",
+    "Egypt":              "Egypt",
+    "New Zealand":        "New Zealand",
+    "Spain":              "Spain",
+    "Uruguay":            "Uruguay",
+    "Saudi Arabia":       "Saudi Arabia",
+    "Cape Verde":         "Cape Verde",
+    "Argentina":          "Argentina",
+    "Austria":            "Austria",
+    "Algeria":            "Algeria",
+    "Jordan":             "Jordan",
+    "Portugal":           "Portugal",
+    "Colombia":           "Colombia",
+    "Uzbekistan":         "Uzbekistan",
+    "DR Congo":           "DR Congo",
+    "England":            "England",
+    "Croatia":            "Croatia",
+    "Panama":             "Panama",
+    "Ghana":              "Ghana",
+    "Qatar":              "Qatar",
+    "Norway":             "Norway",
+  };
+
+  const normalize = (name) => TEAM_MAP[name] || name;
 
   const fetchAll = useCallback(async () => {
     try {
-      // Fetch live + today fixtures
-      const today = new Date().toISOString().split("T")[0];
-      const [fixtRes, standRes, scorerRes] = await Promise.allSettled([
-        callProxy("fixtures", { date: today }),
-        callProxy("standings"),
-        callProxy("players", { type: "topscorers" }),
+      // Fetch matchs + standings + scorers en parallèle
+      const [matchRes, standRes, scorerRes] = await Promise.allSettled([
+        fetch(`${API_PROXY}?endpoint=matches`),
+        fetch(`${API_PROXY}?endpoint=standings`),
+        fetch(`${API_PROXY}?endpoint=scorers`),
       ]);
 
-      // ── Process fixtures ──
-      if (fixtRes.status === "fulfilled") {
-        const fixtures = fixtRes.value?.response || [];
+      // ── Matchs ──
+      if (matchRes.status === "fulfilled" && matchRes.value.ok) {
+        const data = await matchRes.value.json();
+        const matches = data.matches || [];
         const map = {};
-        fixtures.forEach(f => {
-          const id = f.fixture?.id;
-          if (!id) return;
-          const statusCode = f.fixture?.status?.short;
-          const isLive = ["1H","HT","2H","ET","BT","P"].includes(statusCode);
-          const isFinished = ["FT","AET","PEN"].includes(statusCode);
-          map[id] = {
-            status: isLive ? "live" : isFinished ? "finished" : "upcoming",
-            hs: f.goals?.home ?? null,
-            as: f.goals?.away ?? null,
-            minute: f.fixture?.status?.elapsed ?? null,
-            events: (f.events || []).map(e => ({
-              type: e.type === "Goal" ? "goal" : e.type === "Card" ? (e.detail === "Yellow Card" ? "yellow" : "red") : "other",
-              player: e.player?.name || "",
-              team: e.team?.name || "",
-              min: e.time?.elapsed || 0,
-            })),
+
+        matches.forEach(m => {
+          const home = normalize(m.homeTeam?.name);
+          const away = normalize(m.awayTeam?.name);
+          const key  = `${home}_${away}`;
+
+          const status =
+            m.status === "IN_PLAY" || m.status === "PAUSED" ? "live"
+            : m.status === "FINISHED" ? "finished"
+            : "upcoming";
+
+          map[key] = {
+            status,
+            hs:     m.score?.fullTime?.home ?? null,
+            as:     m.score?.fullTime?.away ?? null,
+            minute: m.minute ?? null,
           };
-          // Also index by home_away team names for matching
-          const hName = f.teams?.home?.name;
-          const aName = f.teams?.away?.name;
-          if (hName && aName) map[`${hName}_${aName}`] = map[id];
         });
+
         setLiveData(map);
       }
 
-      // ── Process standings ──
-      if (standRes.status === "fulfilled") {
-        const groups = standRes.value?.response?.[0]?.league?.standings || [];
+      // ── Standings ──
+      if (standRes.status === "fulfilled" && standRes.value.ok) {
+        const data = await standRes.value.json();
+        const groups = data.standings || [];
         const smap = {};
+
         groups.forEach(group => {
-          if (!group.length) return;
-          // Group name from first team's group field
-          const grpName = group[0]?.group || "";
-          const letter = grpName.replace("Group ", "").trim();
-          if (letter) {
-            smap[letter] = group.map(t => ({
-              name: t.team?.name || "",
-              flag: t.team?.logo || "",
-              p: t.all?.played ?? 0,
-              w: t.all?.win ?? 0,
-              d: t.all?.draw ?? 0,
-              l: t.all?.lose ?? 0,
-              gf: t.all?.goals?.for ?? 0,
-              ga: t.all?.goals?.against ?? 0,
-              pts: t.points ?? 0,
-            }));
-          }
+          const letter = group.group?.replace("Group ", "").trim();
+          if (!letter) return;
+          smap[letter] = group.table.map(t => ({
+            name: normalize(t.team?.name),
+            flag: GROUPS[letter]?.find(g =>
+              g.name === normalize(t.team?.name))?.flag || "🏳️",
+            p:   t.playedGames ?? 0,
+            w:   t.won         ?? 0,
+            d:   t.draw        ?? 0,
+            l:   t.lost        ?? 0,
+            gf:  t.goalsFor    ?? 0,
+            ga:  t.goalsAgainst?? 0,
+            pts: t.points      ?? 0,
+          }));
         });
+
         if (Object.keys(smap).length > 0) setStandings(smap);
       }
 
-      // ── Process top scorers ──
-      if (scorerRes.status === "fulfilled") {
-        const players = scorerRes.value?.response || [];
-        setScorers(players.slice(0, 10).map(p => ({
-          name: p.player?.name || "",
-          flag: p.statistics?.[0]?.team?.logo || "",
-          country: p.statistics?.[0]?.team?.name || "",
-          goals: p.statistics?.[0]?.goals?.total ?? 0,
-          assists: p.statistics?.[0]?.goals?.assists ?? 0,
+      // ── Buteurs ──
+      if (scorerRes.status === "fulfilled" && scorerRes.value.ok) {
+        const data = await scorerRes.value.json();
+        const list = data.scorers || [];
+        setScorers(list.slice(0, 10).map(s => ({
+          name:    s.player?.name     || "",
+          country: s.team?.name       || "",
+          goals:   s.goals            ?? 0,
+          assists: s.assists          ?? 0,
         })));
       }
 
       setApiOnline(true);
-    } catch {
+
+    } catch (err) {
+      console.error("fetchAll error:", err);
       setApiOnline(false);
     }
-  }, [callProxy]);
+  }, []);
 
   useEffect(() => {
     fetchAll();
-    // Poll every 30s — Netlify cache handles rate limits
+    // Refresh toutes les 30 secondes
     const id = setInterval(fetchAll, 30000);
     return () => clearInterval(id);
   }, [fetchAll]);
