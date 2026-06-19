@@ -83,13 +83,7 @@ const RECORDS = [
   {v:"17 ans",l:"Plus jeune buteur",h:"Pelé 🇧🇷",d:"Suède 1958, 6 buts",i:"⭐"},
 ];
 
-const NEWS = [
-  {id:1,t:"🔴 LIVE : Portugal 1-1 DR Congo (67') — Match en cours !",time:"Maintenant",tag:"LIVE",c:"#ef4444",i:"🔴"},
-  {id:2,t:"Messi hat-trick ! L'Argentine écrase l'Algérie 3-0 au MetLife Stadium",time:"Il y a 2h",tag:"GROUPE J",c:"#f59e0b",i:"⭐"},
-  {id:3,t:"Sénégal 1-1 France — Les Lions arrachent le nul ! Mané égalise à la 78e",time:"Il y a 1 jour",tag:"🦁 LIONS",c:"#00b359",i:"🦁"},
-  {id:4,t:"Haaland ouvre son compteur — Norvège bat l'Irak 2-0",time:"Il y a 1 jour",tag:"GROUPE I",c:"#1a56db",i:"🇳🇴"},
-  {id:5,t:"Classement buteurs : Messi en tête avec 3 buts, Haaland et Mbappé suivent",time:"Il y a 3h",tag:"STATS",c:"#8b5cf6",i:"📊"},
-];
+const NEWS = [];
 
 // ═══════════════════════════════════════════════════
 // THEME
@@ -233,7 +227,7 @@ function useLiveMatches() {
 
       if (scorerRes.status === "fulfilled" && scorerRes.value.ok) {
         const data = await scorerRes.value.json();
-        setScorers((data.scorers || []).slice(0,10).map(s => ({
+        setScorers((data.scorers || []).map(s => ({
           name: s.player?.name || "",
           country: normalize(s.team?.name || ""),
           flag: GROUPS[Object.keys(GROUPS).find(g => GROUPS[g].find(t => t.name === normalize(s.team?.name)))]?.find(t => t.name === normalize(s.team?.name))?.flag || "🏳️",
@@ -258,28 +252,41 @@ function useLiveMatches() {
 }
 
 // ═══════════════════════════════════════════════════
-// TICKER
+// TICKER — Résultats du jour/veille uniquement, en vert
 // ═══════════════════════════════════════════════════
 function Ticker({liveData}) {
-  const liveMatches = MATCHES.filter(m => {
-    const live = liveData[`${m.home}_${m.away}`] || {};
-    return (live.status || m.status) === "live";
-  });
+  const merge = (m) => {
+    const live = liveData[`${m.home}_${m.away}`];
+    return {
+      ...m,
+      status: live?.status ?? m.status,
+      hs: live?.hs ?? m.hs,
+      as: live?.as ?? m.as,
+      minute: live?.minute ?? m.minute,
+    };
+  };
 
-  const parts = liveMatches.length > 0
-    ? liveMatches.map(m => {
-        const live = liveData[`${m.home}_${m.away}`] || {};
-        const hs = live.hs ?? m.hs ?? 0;
-        const as = live.as ?? m.as ?? 0;
-        return `🔴 LIVE ${m.hf} ${m.home} ${hs}-${as} ${m.away} ${m.af} ${live.minute || m.minute || ""}' `;
-      }).join("  ·  ")
-    : "✅ Mexique 2-0 Afrique du Sud   ·   ✅ Argentine 3-0 Algérie (Messi ×3)   ·   ✅ France 1-1 Sénégal   ·   🔴 LIVE Portugal 1-1 DR Congo (67')   ·   📅 Ce soir: Angleterre-Croatie 22:00   ·";
+  const today = new Date();
+  const todayDay = today.getDate();
+  const yesterdayDay = todayDay - 1;
 
-  const t = parts + "   ";
+  const finishedRecent = MATCHES
+    .map(merge)
+    .filter(m => m.status === "finished" && (m.day === todayDay || m.day === yesterdayDay));
+
+  if (finishedRecent.length === 0) {
+    return null; // rien à afficher si aucun résultat réel du jour/veille
+  }
+
+  const parts = finishedRecent
+    .map(m => `✅ ${m.hf} ${m.home} ${m.hs}-${m.as} ${m.away} ${m.af}`)
+    .join("   ·   ");
+
+  const t = parts + "   ·   ";
   return (
     <div style={{background:"#060d1f",borderBottom:`1px solid ${T.border}`,overflow:"hidden",height:26,display:"flex",alignItems:"center"}}>
       <div style={{display:"flex",whiteSpace:"nowrap",animation:"tk 32s linear infinite"}}>
-        {[t,t].map((x,i)=><span key={i} style={{fontSize:11,color:liveMatches.length>0?T.live:T.grey,paddingRight:60}}>{x}</span>)}
+        {[t,t].map((x,i)=><span key={i} style={{fontSize:11,color:T.green,fontWeight:600,paddingRight:60}}>{x}</span>)}
       </div>
     </div>
   );
@@ -289,11 +296,11 @@ function Ticker({liveData}) {
 // MATCH CARD
 // ═══════════════════════════════════════════════════
 function MCard({m, big=false, liveData={}}) {
-  const live = liveData[`${m.home}_${m.away}`] || {};
-  const status = live.status || m.status;
-  const hs = live.hs ?? m.hs;
-  const as = live.as ?? m.as;
-  const minute = live.minute || m.minute;
+  const live = liveData[`${m.home}_${m.away}`];
+  const status = live?.status ?? m.status;
+  const hs = live?.hs ?? m.hs;
+  const as = live?.as ?? m.as;
+  const minute = live?.minute ?? m.minute;
 
   return (
     <div style={{background:big?"linear-gradient(145deg,#0d2a5e,#0a1628)":T.s,borderRadius:14,overflow:"hidden",border:`1px solid ${status==="live"?"rgba(239,68,68,0.4)":T.border}`}}>
@@ -341,9 +348,16 @@ function PHome({setPage, fav, liveData={}, scorers=[]}) {
   const [,setSec] = useState(0);
   useEffect(()=>{const id=setInterval(()=>setSec(s=>s+1),1000);return()=>clearInterval(id);},[]);
 
+  // Top passeurs dérivé des mêmes données API, trié par passes décisives
+  const assisters = [...scorers]
+    .filter(s => s.assists > 0)
+    .sort((a,b) => b.assists - a.assists);
+
+  // Priorité absolue à l'API : si elle répond, son statut écrase le statut statique fictif
   const liveMs = MATCHES.filter(m => {
-    const live = liveData[`${m.home}_${m.away}`] || {};
-    return (live.status || m.status) === "live";
+    const live = liveData[`${m.home}_${m.away}`];
+    const status = live?.status ?? m.status;
+    return status === "live";
   });
   const favMs = MATCHES.filter(x=>x.home===fav||x.away===fav);
 
@@ -420,14 +434,14 @@ function PHome({setPage, fav, liveData={}, scorers=[]}) {
           </div>
         )}
 
-        {/* Top buteurs si dispo */}
-        {scorers.length > 0 && (
+        {/* Top buteurs — liste complète issue de l'API */}
+        {scorers.length > 0 ? (
           <div style={{marginBottom:14}}>
-            <SecTitle>⚽ Top buteurs</SecTitle>
+            <SecTitle>⚽ Meilleurs buteurs</SecTitle>
             <div style={{background:T.s,borderRadius:14,overflow:"hidden",border:`1px solid ${T.border}`}}>
-              {scorers.slice(0,5).map((s,i)=>(
+              {scorers.map((s,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
-                  <span style={{fontSize:12,fontWeight:800,color:T.grey,width:16}}>{i+1}</span>
+                  <span style={{fontSize:12,fontWeight:800,color:i<3?T.gold:T.grey,width:16}}>{i+1}</span>
                   <span style={{fontSize:18}}>{s.flag}</span>
                   <div style={{flex:1}}>
                     <div style={{fontSize:13,fontWeight:700,color:T.white}}>{s.name}</div>
@@ -441,24 +455,38 @@ function PHome({setPage, fav, liveData={}, scorers=[]}) {
               ))}
             </div>
           </div>
+        ) : (
+          <div style={{marginBottom:14}}>
+            <SecTitle>⚽ Meilleurs buteurs</SecTitle>
+            <div style={{background:T.s,borderRadius:14,padding:24,border:`1px solid ${T.border}`,textAlign:"center"}}>
+              <div style={{fontSize:28,marginBottom:8}}>📊</div>
+              <div style={{fontSize:12,color:T.grey}}>Classement en cours de chargement…</div>
+            </div>
+          </div>
         )}
 
-        {/* Actualités */}
-        <div style={{marginBottom:14}}>
-          <SecTitle>📰 Actualités</SecTitle>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {NEWS.map(n=>(
-              <div key={n.id} style={{background:T.s,borderRadius:12,padding:"12px 14px",border:`1px solid ${n.c+"33"}`,display:"flex",gap:12,alignItems:"flex-start"}}>
-                <div style={{width:46,height:46,background:T.s2,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{n.i}</div>
-                <div style={{flex:1}}>
-                  <Bdg label={n.tag} color={n.c}/>
-                  <div style={{fontSize:13,fontWeight:600,color:T.white,marginTop:5,lineHeight:1.4}}>{n.t}</div>
-                  <div style={{fontSize:11,color:T.g2,marginTop:4}}>{n.time}</div>
+        {/* Top passeurs — liste complète issue de l'API */}
+        {assisters.length > 0 && (
+          <div style={{marginBottom:14}}>
+            <SecTitle>🎯 Meilleurs passeurs</SecTitle>
+            <div style={{background:T.s,borderRadius:14,overflow:"hidden",border:`1px solid ${T.border}`}}>
+              {assisters.map((s,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:i<3?T.bl:T.grey,width:16}}>{i+1}</span>
+                  <span style={{fontSize:18}}>{s.flag}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.white}}>{s.name}</div>
+                    <div style={{fontSize:11,color:T.grey}}>{s.country}</div>
+                  </div>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:18,fontWeight:900,color:T.bl}}>{s.assists}</div>
+                    <div style={{fontSize:9,color:T.grey}}>passes</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -479,8 +507,8 @@ function PMatches({fav, liveData={}}) {
     match: MATCHES.some(m => m.day === d),
     sen: MATCHES.some(m => m.day === d && m.isSenegal),
     live: MATCHES.some(m => {
-      const live = liveData[`${m.home}_${m.away}`] || {};
-      return m.day === d && (live.status || m.status) === "live";
+      const live = liveData[`${m.home}_${m.away}`];
+      return m.day === d && (live?.status ?? m.status) === "live";
     }),
   }));
 
@@ -505,10 +533,10 @@ function PMatches({fav, liveData={}}) {
   if(selMatch) {
     const m = selMatch;
     const live = liveData[`${m.home}_${m.away}`] || {};
-    const status = live.status || m.status;
-    const hs = live.hs ?? m.hs;
-    const as = live.as ?? m.as;
-    const minute = live.minute || m.minute;
+    const status = live?.status ?? m.status;
+    const hs = live?.hs ?? m.hs;
+    const as = live?.as ?? m.as;
+    const minute = live?.minute ?? m.minute;
     const isSen = m.home==="Senegal" || m.away==="Senegal";
 
     const H2H = {
@@ -518,48 +546,10 @@ function PMatches({fav, liveData={}}) {
       "Argentina-Algeria":[{year:2026,comp:"Coupe du Monde 2026",home:"Argentine",hf:"🇦🇷",hs:3,as:0,away:"Algérie",af:"🇩🇿",note:"Messi hat-trick !"}],
     };
 
-    const LINEUPS = {
-      "France":{formation:"4-3-3",players:[
-        {n:"Maignan",pos:"GB",num:16},{n:"Koundé",pos:"DD",num:5},{n:"Upamecano",pos:"DC",num:4},
-        {n:"Saliba",pos:"DC",num:17},{n:"T. Hernandez",pos:"DG",num:22},
-        {n:"Camavinga",pos:"MC",num:8},{n:"Tchouameni",pos:"MC",num:8},{n:"Rabiot",pos:"MC",num:14},
-        {n:"Dembélé",pos:"AD",num:11},{n:"Mbappé",pos:"AT",num:10},{n:"Griezmann",pos:"AG",num:7},
-      ]},
-      "Senegal":{formation:"4-3-3",players:[
-        {n:"Mendy",pos:"GB",num:1},{n:"Sabaly",pos:"DD",num:2},{n:"Koulibaly",pos:"DC",num:3},
-        {n:"Niakhate",pos:"DC",num:23},{n:"Jakobs",pos:"DG",num:12},
-        {n:"P. Gueye",pos:"MC",num:6},{n:"N. Mendy",pos:"MC",num:8},{n:"Diatta",pos:"MC",num:19},
-        {n:"I. Sarr",pos:"AD",num:7},{n:"Mané",pos:"AT",num:10},{n:"Diédhiou",pos:"AG",num:14},
-      ]},
-      "Norway":{formation:"4-2-3-1",players:[
-        {n:"Nyland",pos:"GB",num:1},{n:"Ryerson",pos:"DD",num:2},{n:"Hanche-Olsen",pos:"DC",num:5},
-        {n:"Ajer",pos:"DC",num:6},{n:"Meling",pos:"DG",num:3},
-        {n:"Berg",pos:"MC",num:8},{n:"Thorsby",pos:"MC",num:16},
-        {n:"Ødegaard",pos:"MO",num:10},{n:"Elyounoussi",pos:"AD",num:7},{n:"Berge",pos:"AG",num:15},
-        {n:"Haaland",pos:"AT",num:9},
-      ]},
-      "Iraq":{formation:"4-4-2",players:[
-        {n:"Dohaim",pos:"GB",num:1},{n:"Al-Hamdan",pos:"DD",num:2},{n:"Tarek",pos:"DC",num:5},
-        {n:"Hussein",pos:"DC",num:4},{n:"Ali Adnan",pos:"DG",num:3},
-        {n:"Ameen",pos:"MC",num:8},{n:"Al-Maliki",pos:"MC",num:6},{n:"Ridha",pos:"MC",num:11},{n:"Mohanad",pos:"MC",num:10},
-        {n:"Ayman",pos:"AT",num:9},{n:"Amir",pos:"AT",num:7},
-      ]},
-      "Argentina":{formation:"4-4-2",players:[
-        {n:"E. Martínez",pos:"GB",num:23},{n:"Montiel",pos:"DD",num:4},{n:"C. Romero",pos:"DC",num:13},
-        {n:"L. Martínez",pos:"DC",num:6},{n:"F. Medina",pos:"DG",num:25},
-        {n:"De Paul",pos:"MC",num:7},{n:"Mac Allister",pos:"MC",num:20},{n:"Enzo",pos:"MC",num:24},{n:"Almada",pos:"MC",num:16},
-        {n:"Messi",pos:"AT",num:10},{n:"L. Martínez",pos:"AT",num:22},
-      ]},
-      "England":{formation:"4-3-3",players:[
-        {n:"Raya",pos:"GB",num:1},{n:"Alexander-Arnold",pos:"DD",num:2},{n:"Stones",pos:"DC",num:5},
-        {n:"Guehi",pos:"DC",num:6},{n:"Trippier",pos:"DG",num:12},
-        {n:"Bellingham",pos:"MC",num:10},{n:"Rice",pos:"MC",num:4},{n:"Mainoo",pos:"MC",num:26},
-        {n:"Saka",pos:"AD",num:7},{n:"Kane",pos:"AT",num:9},{n:"Foden",pos:"AG",num:11},
-      ]},
-    };
+    // Compositions : uniquement via API, jamais de données statiques inventées
+    const homeLineup = null;
+    const awayLineup = null;
 
-    const homeLineup = LINEUPS[m.home] || null;
-    const awayLineup = LINEUPS[m.away] || null;
     const h2hKey = `${m.home}-${m.away}`;
     const h2hData = H2H[h2hKey] || H2H[`${m.away}-${m.home}`] || [];
 
@@ -673,58 +663,57 @@ function PMatches({fav, liveData={}}) {
             </div>
           )}
 
-          {/* LINEUP GRAPHIQUE */}
+          {/* LINEUP — uniquement si l'API fournit des données réelles */}
           {dtab==="lineup" && (
             <div>
-              <div style={{background:"rgba(245,158,11,0.08)",borderRadius:10,padding:"10px 14px",marginBottom:12,border:"1px solid rgba(245,158,11,0.2)"}}>
-                <span style={{fontSize:12,color:T.gold,fontWeight:700}}>⚠️ Compositions probables — non officielles</span>
-              </div>
-
-              {/* TERRAIN COMPLET avec les 2 équipes */}
-              <div style={{
-                background:"linear-gradient(180deg,#14532d 0%,#166534 50%,#14532d 100%)",
-                borderRadius:16,
-                padding:"14px 8px",
-                position:"relative",
-                border:"2px solid #15803d",
-                marginBottom:12,
-                overflow:"hidden",
-              }}>
-                {/* Lignes de terrain */}
-                <div style={{position:"absolute",top:"50%",left:"6%",right:"6%",height:1,background:"rgba(255,255,255,0.25)",zIndex:1}}/>
-                <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:72,height:72,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.2)",zIndex:1}}/>
-                <div style={{position:"absolute",top:8,left:"25%",right:"25%",height:40,border:"1px solid rgba(255,255,255,0.2)",borderBottom:"none",zIndex:1,borderRadius:"4px 4px 0 0"}}/>
-                <div style={{position:"absolute",bottom:8,left:"25%",right:"25%",height:40,border:"1px solid rgba(255,255,255,0.2)",borderTop:"none",zIndex:1,borderRadius:"0 0 4px 4px"}}/>
-
-                {/* Team 1 — HOME (attaque vers le bas) */}
-                <div style={{marginBottom:8}}>
-                  <div style={{textAlign:"center",marginBottom:6}}>
-                    <span style={{fontSize:10,fontWeight:800,color:"rgba(255,255,255,0.7)",background:"rgba(0,0,0,0.4)",padding:"2px 10px",borderRadius:10,letterSpacing:1}}>{m.home} {homeLineup?"· "+homeLineup.formation:""}</span>
+              {(homeLineup || awayLineup) ? (
+                <>
+                  <div style={{background:"rgba(245,158,11,0.08)",borderRadius:10,padding:"10px 14px",marginBottom:12,border:"1px solid rgba(245,158,11,0.2)"}}>
+                    <span style={{fontSize:12,color:T.gold,fontWeight:700}}>⚠️ Compositions probables — non officielles</span>
                   </div>
-                  <LineupField lineup={homeLineup} isSen={m.home==="Senegal"} reversed={false}/>
+                  <div style={{
+                    background:"linear-gradient(180deg,#14532d 0%,#166534 50%,#14532d 100%)",
+                    borderRadius:16,
+                    padding:"14px 8px",
+                    position:"relative",
+                    border:"2px solid #15803d",
+                    marginBottom:12,
+                    overflow:"hidden",
+                  }}>
+                    <div style={{position:"absolute",top:"50%",left:"6%",right:"6%",height:1,background:"rgba(255,255,255,0.25)",zIndex:1}}/>
+                    <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:72,height:72,borderRadius:"50%",border:"1px solid rgba(255,255,255,0.2)",zIndex:1}}/>
+                    <div style={{position:"absolute",top:8,left:"25%",right:"25%",height:40,border:"1px solid rgba(255,255,255,0.2)",borderBottom:"none",zIndex:1,borderRadius:"4px 4px 0 0"}}/>
+                    <div style={{position:"absolute",bottom:8,left:"25%",right:"25%",height:40,border:"1px solid rgba(255,255,255,0.2)",borderTop:"none",zIndex:1,borderRadius:"0 0 4px 4px"}}/>
+                    <div style={{marginBottom:8}}>
+                      <div style={{textAlign:"center",marginBottom:6}}>
+                        <span style={{fontSize:10,fontWeight:800,color:"rgba(255,255,255,0.7)",background:"rgba(0,0,0,0.4)",padding:"2px 10px",borderRadius:10,letterSpacing:1}}>{m.home} {homeLineup?"· "+homeLineup.formation:""}</span>
+                      </div>
+                      <LineupField lineup={homeLineup} isSen={m.home==="Senegal"} reversed={false}/>
+                    </div>
+                    <div style={{height:1,background:"rgba(255,255,255,0.15)",margin:"6px 0",position:"relative",zIndex:2}}/>
+                    <div style={{marginTop:8}}>
+                      <LineupField lineup={awayLineup} isSen={m.away==="Senegal"} reversed={true}/>
+                      <div style={{textAlign:"center",marginTop:6}}>
+                        <span style={{fontSize:10,fontWeight:800,color:"rgba(255,255,255,0.7)",background:"rgba(0,0,0,0.4)",padding:"2px 10px",borderRadius:10,letterSpacing:1}}>{m.away} {awayLineup?"· "+awayLineup.formation:""}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center"}}>
+                    {[{l:"Gardien",c:"#1d4ed8"},{l:"Défenseur",c:"#16a34a"},{l:"Milieu",c:"#d97706"},{l:"Attaquant",c:"#dc2626"}].map(x=>(
+                      <div key={x.l} style={{display:"flex",alignItems:"center",gap:5,background:T.s,borderRadius:8,padding:"4px 10px",border:`1px solid ${T.border}`}}>
+                        <div style={{width:10,height:10,borderRadius:"50%",background:x.c}}/>
+                        <span style={{fontSize:10,color:T.grey}}>{x.l}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div style={{background:T.s,borderRadius:14,padding:36,border:`1px solid ${T.border}`,textAlign:"center"}}>
+                  <div style={{fontSize:32,marginBottom:10}}>👥</div>
+                  <div style={{fontSize:14,fontWeight:700,color:T.white,marginBottom:6}}>Compositions non disponibles</div>
+                  <div style={{fontSize:12,color:T.grey}}>Elles seront publiées environ 1h avant le coup d'envoi</div>
                 </div>
-
-                {/* Séparateur */}
-                <div style={{height:1,background:"rgba(255,255,255,0.15)",margin:"6px 0",position:"relative",zIndex:2}}/>
-
-                {/* Team 2 — AWAY (attaque vers le haut) */}
-                <div style={{marginTop:8}}>
-                  <LineupField lineup={awayLineup} isSen={m.away==="Senegal"} reversed={true}/>
-                  <div style={{textAlign:"center",marginTop:6}}>
-                    <span style={{fontSize:10,fontWeight:800,color:"rgba(255,255,255,0.7)",background:"rgba(0,0,0,0.4)",padding:"2px 10px",borderRadius:10,letterSpacing:1}}>{m.away} {awayLineup?"· "+awayLineup.formation:""}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Légende couleurs */}
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center"}}>
-                {[{l:"Gardien",c:"#1d4ed8"},{l:"Défenseur",c:"#16a34a"},{l:"Milieu",c:"#d97706"},{l:"Attaquant",c:"#dc2626"}].map(x=>(
-                  <div key={x.l} style={{display:"flex",alignItems:"center",gap:5,background:T.s,borderRadius:8,padding:"4px 10px",border:`1px solid ${T.border}`}}>
-                    <div style={{width:10,height:10,borderRadius:"50%",background:x.c}}/>
-                    <span style={{fontSize:10,color:T.grey}}>{x.l}</span>
-                  </div>
-                ))}
-              </div>
+              )}
             </div>
           )}
 
