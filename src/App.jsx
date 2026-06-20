@@ -148,6 +148,7 @@ const API_PROXY = "/api/football";
 
 function useLiveMatches() {
   const [liveData, setLiveData] = useState({});
+  const [allMatches, setAllMatches] = useState([]); // liste complète et réelle issue de l'API
   const [standings, setStandings] = useState({});
   const [scorers, setScorers] = useState([]);
   const [apiOnline, setApiOnline] = useState(false);
@@ -185,6 +186,8 @@ function useLiveMatches() {
         const data = await matchRes.value.json();
         const matches = data.matches || [];
         const map = {};
+        const fullList = [];
+
         matches.forEach(m => {
           const home = normalize(m.homeTeam?.name);
           const away = normalize(m.awayTeam?.name);
@@ -193,14 +196,31 @@ function useLiveMatches() {
             ["IN_PLAY","PAUSED"].includes(m.status) ? "live"
             : m.status === "FINISHED" ? "finished"
             : "upcoming";
-          map[key] = {
-            status,
-            hs: m.score?.fullTime?.home ?? m.score?.halfTime?.home ?? null,
-            as: m.score?.fullTime?.away ?? m.score?.halfTime?.away ?? null,
-            minute: m.minute ?? null,
-          };
+          const hs = m.score?.fullTime?.home ?? m.score?.halfTime?.home ?? null;
+          const as = m.score?.fullTime?.away ?? m.score?.halfTime?.away ?? null;
+          const minute = m.minute ?? null;
+
+          map[key] = { status, hs, as, minute };
+
+          const utcDate = m.utcDate ? new Date(m.utcDate) : null;
+          fullList.push({
+            id: `api-${m.id}`,
+            day: utcDate ? utcDate.getDate() : null,
+            date: utcDate ? utcDate.toLocaleDateString("fr-FR",{day:"numeric",month:"short"}) : "",
+            time: utcDate ? utcDate.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}) : "",
+            group: m.group?.replace("Group ","") || "",
+            home, away,
+            hf: GROUPS[m.group?.replace("Group ","")]?.find(t=>t.name===home)?.flag || "🏳️",
+            af: GROUPS[m.group?.replace("Group ","")]?.find(t=>t.name===away)?.flag || "🏳️",
+            stadium: m.venue || "",
+            city: "",
+            status, hs, as, minute,
+            isSenegal: home==="Senegal" || away==="Senegal",
+          });
         });
+
         setLiveData(map);
+        if (fullList.length > 0) setAllMatches(fullList);
       }
 
       if (standRes.status === "fulfilled" && standRes.value.ok) {
@@ -248,13 +268,13 @@ function useLiveMatches() {
     return () => clearInterval(id);
   }, [fetchAll]);
 
-  return { liveData, standings, scorers, apiOnline, refetch: fetchAll };
+  return { liveData, allMatches, standings, scorers, apiOnline, refetch: fetchAll };
 }
 
 // ═══════════════════════════════════════════════════
 // TICKER — Résultats du jour/veille uniquement, en vert
 // ═══════════════════════════════════════════════════
-function Ticker({liveData}) {
+function Ticker({liveData, matches=MATCHES}) {
   const merge = (m) => {
     const live = liveData[`${m.home}_${m.away}`];
     return {
@@ -270,7 +290,7 @@ function Ticker({liveData}) {
   const todayDay = today.getDate();
   const yesterdayDay = todayDay - 1;
 
-  const finishedRecent = MATCHES
+  const finishedRecent = matches
     .map(merge)
     .filter(m => m.status === "finished" && (m.day === todayDay || m.day === yesterdayDay));
 
@@ -344,7 +364,7 @@ function MCard({m, big=false, liveData={}}) {
 // ═══════════════════════════════════════════════════
 // PAGE HOME
 // ═══════════════════════════════════════════════════
-function PHome({setPage, fav, liveData={}, scorers=[]}) {
+function PHome({setPage, fav, liveData={}, scorers=[], matches=MATCHES}) {
   const [,setSec] = useState(0);
   useEffect(()=>{const id=setInterval(()=>setSec(s=>s+1),1000);return()=>clearInterval(id);},[]);
 
@@ -354,16 +374,16 @@ function PHome({setPage, fav, liveData={}, scorers=[]}) {
     .sort((a,b) => b.assists - a.assists);
 
   // Priorité absolue à l'API : si elle répond, son statut écrase le statut statique fictif
-  const liveMs = MATCHES.filter(m => {
+  const liveMs = matches.filter(m => {
     const live = liveData[`${m.home}_${m.away}`];
     const status = live?.status ?? m.status;
     return status === "live";
   });
-  const favMs = MATCHES.filter(x=>x.home===fav||x.away===fav);
+  const favMs = matches.filter(x=>x.home===fav||x.away===fav);
 
   // Matchs du jour
   const today = new Date().getDate();
-  const todayMs = MATCHES.filter(m => m.day === today);
+  const todayMs = matches.filter(m => m.day === today);
 
   return (
     <div className="fu">
@@ -495,36 +515,54 @@ function PHome({setPage, fav, liveData={}, scorers=[]}) {
 // ═══════════════════════════════════════════════════
 // PAGE MATCHS
 // ═══════════════════════════════════════════════════
-function PMatches({fav, liveData={}}) {
+function PMatches({fav, liveData={}, matches=MATCHES}) {
   // Détecte le jour actuel automatiquement
   const [day, setDay] = useState(() => new Date().getDate());
-  const [filter, setFilter] = useState("Tous");
+  const [filter, setFilter] = useState("Jour");
   const [selMatch, setSelMatch] = useState(null);
   const [dtab, setDtab] = useState("info");
 
-  const CAL = [11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26].map(d => ({
+  const days = [...new Set(matches.map(m=>m.day).filter(Boolean))].sort((a,b)=>a-b);
+
+  const CAL = days.map(d => ({
     day: d,
-    match: MATCHES.some(m => m.day === d),
-    sen: MATCHES.some(m => m.day === d && m.isSenegal),
-    live: MATCHES.some(m => {
+    match: matches.some(m => m.day === d),
+    sen: matches.some(m => m.day === d && m.isSenegal),
+    live: matches.some(m => {
       const live = liveData[`${m.home}_${m.away}`];
       return m.day === d && (live?.status ?? m.status) === "live";
     }),
   }));
 
-  const LIVE_MATCHES = MATCHES.map(m => {
-    const live = liveData[`${m.home}_${m.away}`] || {};
-    return live.status ? {...m, status:live.status, hs:live.hs??m.hs, as:live.as??m.as, minute:live.minute||m.minute} : m;
+  const LIVE_MATCHES = matches.map(m => {
+    const live = liveData[`${m.home}_${m.away}`];
+    const status = live?.status ?? m.status;
+    return {
+      ...m,
+      status,
+      hs: live?.hs ?? m.hs,
+      as: live?.as ?? m.as,
+      minute: live?.minute ?? m.minute,
+    };
   });
 
   const isSenFilter = filter === fav || filter === "Senegal";
+  const isAllFilter = filter === "Calendrier";
   const dayMs = isSenFilter
     ? LIVE_MATCHES.filter(m => m.home===fav || m.away===fav)
+    : isAllFilter
+    ? LIVE_MATCHES // onglet "Tous les matchs" — calendrier complet, pas de filtre par jour
     : LIVE_MATCHES.filter(m => {
         if(m.day !== day) return false;
         if(filter==="Live") return m.status==="live";
         return true;
       });
+
+  // Pour le calendrier complet, groupe par date plutôt que par groupe
+  const byDate = {};
+  if (isAllFilter) {
+    dayMs.forEach(m => { if(!byDate[m.date]) byDate[m.date]=[]; byDate[m.date].push(m); });
+  }
 
   const byGrp = {};
   dayMs.forEach(m => { if(!byGrp[m.group]) byGrp[m.group]=[]; byGrp[m.group].push(m); });
@@ -532,7 +570,7 @@ function PMatches({fav, liveData={}}) {
   // ── DETAIL MATCH ──
   if(selMatch) {
     const m = selMatch;
-    const live = liveData[`${m.home}_${m.away}`] || {};
+    const live = liveData[`${m.home}_${m.away}`];
     const status = live?.status ?? m.status;
     const hs = live?.hs ?? m.hs;
     const as = live?.as ?? m.as;
@@ -855,8 +893,8 @@ function PMatches({fav, liveData={}}) {
           </div>
         </div>
 
-        {/* Calendrier */}
-        {!isSenFilter && (
+        {/* Calendrier de jours — masqué en mode Calendrier complet ou Sénégal */}
+        {!isSenFilter && !isAllFilter && (
           <div style={{display:"flex",overflowX:"auto",scrollbarWidth:"none",padding:"0 10px 8px"}}>
             {CAL.map(c=>(
               <div key={c.day} onClick={()=>setDay(c.day)} style={{flex:"0 0 auto",width:44,textAlign:"center",cursor:"pointer"}}>
@@ -870,9 +908,9 @@ function PMatches({fav, liveData={}}) {
         )}
 
         <div style={{display:"flex",gap:8,padding:"0 14px 10px",overflowX:"auto",scrollbarWidth:"none"}}>
-          {["Tous","Live",fav].map(f=>(
-            <button key={f} onClick={()=>setFilter(f)} style={{background:filter===f?(f===fav?"rgba(0,179,89,0.9)":T.blue):T.s2,color:filter===f?T.white:T.grey,border:filter===f&&f===fav?"2px solid #00b359":"none",borderRadius:20,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
-              {f==="Senegal"?"🦁 Sénégal":f}
+          {["Jour","Calendrier","Live",fav].map(f=>(
+            <button key={f} onClick={()=>setFilter(f)} style={{background:filter===f?(f===fav?"rgba(0,179,89,0.9)":T.blue):T.s2,color:filter===f?T.white:T.grey,border:filter===f&&f===fav?"2px solid #00b359":"none",borderRadius:20,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+              {f==="Senegal"?"🦁 Sénégal":f==="Calendrier"?"📅 Tous les matchs":f}
             </button>
           ))}
         </div>
@@ -888,14 +926,37 @@ function PMatches({fav, liveData={}}) {
           </div>
         )}
 
-        {Object.keys(byGrp).length===0 && (
+        {Object.keys(byGrp).length===0 && dayMs.length===0 && (
           <div style={{textAlign:"center",padding:"50px 20px",color:T.grey}}>
             <div style={{fontSize:32,marginBottom:10}}>📭</div>
-            <div>Aucun match ce jour</div>
+            <div>Aucun match{isAllFilter?"":" ce jour"}</div>
           </div>
         )}
 
-        {Object.entries(byGrp).map(([grp,ms])=>(
+        {/* Vue Calendrier complet — groupée par date */}
+        {isAllFilter && Object.entries(byDate).map(([date,ms])=>(
+          <div key={date} style={{marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:800,color:T.grey,letterSpacing:1,marginBottom:8,paddingLeft:4}}>{date.toUpperCase()}</div>
+            <div style={{background:T.s,borderRadius:14,overflow:"hidden",border:`1px solid ${T.border}`}}>
+              {ms.map((m,i)=>(
+                <div key={m.id} onClick={()=>{setSelMatch(m);setDtab("info");}}
+                  style={{borderTop:i>0?`1px solid ${T.border}`:"none",background:m.isSenegal?"rgba(0,179,89,0.04)":"transparent",padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:8}}>
+                  <Bdg label={`GR.${m.group}`} color={m.group==="I"?T.sen:T.bl}/>
+                  <Fl f={m.hf} s={22}/>
+                  <span style={{flex:1,fontSize:12,fontWeight:600,color:m.home==="Senegal"?T.sen:T.white}}>{m.home}</span>
+                  <span style={{fontSize:14,fontWeight:900,color:m.status==="live"?T.live:T.white,minWidth:16,textAlign:"center"}}>{m.status!=="upcoming"?m.hs:""}</span>
+                  <span style={{fontSize:10,color:T.grey,minWidth:34,textAlign:"center"}}>{m.status==="upcoming"?m.time:"–"}</span>
+                  <span style={{fontSize:14,fontWeight:900,color:m.status==="live"?T.live:T.white,minWidth:16,textAlign:"center"}}>{m.status!=="upcoming"?m.as:""}</span>
+                  <span style={{flex:1,fontSize:12,fontWeight:600,color:m.away==="Senegal"?T.sen:T.white,textAlign:"right"}}>{m.away}</span>
+                  <Fl f={m.af} s={22}/>
+                  {m.status==="live" && <span className="ld" style={{width:6,height:6,borderRadius:"50%",background:T.live,flexShrink:0}}/>}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {!isAllFilter && Object.entries(byGrp).map(([grp,ms])=>(
           <div key={grp} style={{background:T.s,borderRadius:14,overflow:"hidden",border:`1px solid ${grp==="I"?"rgba(0,179,89,0.25)":T.border}`,marginBottom:12}}>
             <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
@@ -1303,14 +1364,14 @@ function PHistory() {
 // ═══════════════════════════════════════════════════
 // PAGE STADES
 // ═══════════════════════════════════════════════════
-function PStadiums() {
+function PStadiums({matches=MATCHES}) {
   const [sel, setSel] = useState(null);
   const [cf, setCf] = useState("Tous");
   const filtered = VENUES.filter(v=>cf==="Tous"||(cf==="🇺🇸"&&v.flag==="🇺🇸")||(cf==="🇲🇽"&&v.flag==="🇲🇽")||(cf==="🇨🇦"&&v.flag==="🇨🇦"));
 
   if(sel) {
     const v = sel;
-    const vms = MATCHES.filter(m=>m.stadium===v.name);
+    const vms = matches.filter(m=>m.stadium===v.name);
     return (
       <div className="fu">
         <div style={{background:"linear-gradient(160deg,#0d2a5e,#060d1f)",padding:"16px 16px 20px"}}>
@@ -1375,7 +1436,7 @@ function PStadiums() {
 // ═══════════════════════════════════════════════════
 // PAGE PRONOSTICS
 // ═══════════════════════════════════════════════════
-function PPlay() {
+function PPlay({matches=MATCHES}) {
   const [pronos, setPronos] = useState(() => {
     try { return JSON.parse(localStorage.getItem("xaritsoccer_pronos") || "{}"); } catch { return {}; }
   });
@@ -1410,7 +1471,7 @@ function PPlay() {
       </div>
       {tab==="pronos" && (
         <div style={{padding:"12px 14px"}}>
-          {MATCHES.map(m=>{
+          {matches.map(m=>{
             const p = pronos[m.id]||{};
             const isSen = m.isSenegal;
             return (
@@ -1580,7 +1641,10 @@ export default function App() {
     try { return localStorage.getItem("xaritsoccer_fav") || "Senegal"; } catch { return "Senegal"; }
   });
   const [page, setPage] = useState(0);
-  const { liveData, standings, scorers, apiOnline } = useLiveMatches();
+  const { liveData, allMatches, standings, scorers, apiOnline } = useLiveMatches();
+
+  // Liste réelle si l'API a répondu, sinon fallback statique minimal (jamais affiché comme "live")
+  const matches = allMatches.length > 0 ? allMatches : MATCHES;
 
   if(!onboarded) return (
     <Onboarding onDone={(team)=>{
@@ -1597,16 +1661,16 @@ export default function App() {
   return (
     <div style={{minHeight:"100vh",background:T.bg,color:"#e5e7eb",fontFamily:"'Inter','SF Pro Display','Segoe UI',system-ui,sans-serif",maxWidth:480,margin:"0 auto",position:"relative"}}>
       <style>{css}</style>
-      <div id="appscroll" style={{height:"100vh",overflowY:"auto",overflowX:"hidden"}}>
-        <Ticker liveData={liveData}/>
+      <div id="appscroll" style={{height:"100vh",overflowY:"auto",overflowX:"hidden",overscrollBehaviorY:"contain",WebkitOverflowScrolling:"touch"}}>
+        <Ticker liveData={liveData} matches={matches}/>
         <div style={{paddingBottom:100}}>
-          {page===0 && <PHome setPage={setPage} fav={fav} liveData={liveData} scorers={scorers}/>}
-          {page===1 && <PMatches fav={fav} liveData={liveData}/>}
+          {page===0 && <PHome setPage={setPage} fav={fav} liveData={liveData} scorers={scorers} matches={matches}/>}
+          {page===1 && <PMatches fav={fav} liveData={liveData} matches={matches}/>}
           {page===2 && <PGroups standings={standings}/>}
           {page===3 && <PPlayers/>}
           {page===4 && <PHistory/>}
-          {page===5 && <PStadiums/>}
-          {page===6 && <PPlay/>}
+          {page===5 && <PStadiums matches={matches}/>}
+          {page===6 && <PPlay matches={matches}/>}
         </div>
       </div>
       <FloatingNav page={page} setPage={setPage}/>
