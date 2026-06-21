@@ -174,6 +174,15 @@ function useLiveMatches() {
 
   const normalize = (name) => TEAM_MAP[name] || name;
 
+  // Helper partagé : trouve le drapeau d'une équipe en cherchant dans tous les groupes
+  const findFlag = (teamName) => {
+    for (const g of Object.values(GROUPS)) {
+      const found = g.find(t => t.name === teamName);
+      if (found) return found.flag;
+    }
+    return "🏳️";
+  };
+
   const fetchAll = useCallback(async () => {
     try {
       const [matchRes, standRes, scorerRes] = await Promise.allSettled([
@@ -202,16 +211,19 @@ function useLiveMatches() {
 
           map[key] = { status, hs, as, minute };
 
+          // football-data.org renvoie "GROUP_A", pas "Group A" — extraction robuste de la lettre
+          const groupLetter = (m.group || "").match(/[A-L]$/)?.[0] || "";
+
           const utcDate = m.utcDate ? new Date(m.utcDate) : null;
           fullList.push({
             id: `api-${m.id}`,
             day: utcDate ? utcDate.getDate() : null,
             date: utcDate ? utcDate.toLocaleDateString("fr-FR",{day:"numeric",month:"short"}) : "",
             time: utcDate ? utcDate.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}) : "",
-            group: m.group?.replace("Group ","") || "",
+            group: groupLetter,
             home, away,
-            hf: GROUPS[m.group?.replace("Group ","")]?.find(t=>t.name===home)?.flag || "🏳️",
-            af: GROUPS[m.group?.replace("Group ","")]?.find(t=>t.name===away)?.flag || "🏳️",
+            hf: findFlag(home),
+            af: findFlag(away),
             stadium: m.venue || "",
             city: "",
             status, hs, as, minute,
@@ -227,33 +239,40 @@ function useLiveMatches() {
         const data = await standRes.value.json();
         const groups = data.standings || [];
         const smap = {};
+
         groups.forEach(group => {
-          const letter = group.group?.replace("Group ","").trim();
+          const letter = (group.group || "").match(/[A-L]$/)?.[0] || "";
           if (!letter) return;
-          smap[letter] = group.table.map(t => ({
-            name: normalize(t.team?.name),
-            flag: GROUPS[letter]?.find(g => g.name === normalize(t.team?.name))?.flag || "🏳️",
-            p: t.playedGames ?? 0,
-            w: t.won ?? 0,
-            d: t.draw ?? 0,
-            l: t.lost ?? 0,
-            gf: t.goalsFor ?? 0,
-            ga: t.goalsAgainst ?? 0,
-            pts: t.points ?? 0,
-          }));
+          smap[letter] = group.table.map(t => {
+            const teamName = normalize(t.team?.name);
+            return {
+              name: teamName,
+              flag: findFlag(teamName),
+              p: t.playedGames ?? 0,
+              w: t.won ?? 0,
+              d: t.draw ?? 0,
+              l: t.lost ?? 0,
+              gf: t.goalsFor ?? 0,
+              ga: t.goalsAgainst ?? 0,
+              pts: t.points ?? 0,
+            };
+          });
         });
         if (Object.keys(smap).length > 0) setStandings(smap);
       }
 
       if (scorerRes.status === "fulfilled" && scorerRes.value.ok) {
         const data = await scorerRes.value.json();
-        setScorers((data.scorers || []).map(s => ({
-          name: s.player?.name || "",
-          country: normalize(s.team?.name || ""),
-          flag: GROUPS[Object.keys(GROUPS).find(g => GROUPS[g].find(t => t.name === normalize(s.team?.name)))]?.find(t => t.name === normalize(s.team?.name))?.flag || "🏳️",
-          goals: s.goals ?? 0,
-          assists: s.assists ?? 0,
-        })));
+        setScorers((data.scorers || []).map(s => {
+          const country = normalize(s.team?.name || "");
+          return {
+            name: s.player?.name || "",
+            country,
+            flag: findFlag(country),
+            goals: s.goals ?? 0,
+            assists: s.assists ?? 0,
+          };
+        }));
       }
 
       setApiOnline(true);
