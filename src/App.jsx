@@ -543,6 +543,83 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
   const [selMatch, setSelMatch] = useState(null);
   const [dtab, setDtab] = useState("info");
 
+  // ─── Compositions & événements réels — via API-Football (api-football.com) ───
+  // IMPORTANT : ces hooks doivent être appelés à chaque rendu, sans condition,
+  // pour respecter les règles de React (jamais de hook dans un if).
+  const [homeLineup, setHomeLineup] = useState(null);
+  const [awayLineup, setAwayLineup] = useState(null);
+  const [apiEvents, setApiEvents] = useState([]);
+  const [fixtureId, setFixtureId] = useState(null);
+
+  // 1. Trouve le fixture id chez API-Football à partir de la date (ISO) + noms d'équipes
+  useEffect(() => {
+    setHomeLineup(null);
+    setAwayLineup(null);
+    setApiEvents([]);
+    setFixtureId(null);
+
+    if (!selMatch || !selMatch.isoDate) return;
+    const m = selMatch;
+
+    let cancelled = false;
+    async function loadFixture() {
+      try {
+        const r = await fetch(`/api/apifootball?endpoint=find-fixture&date=${m.isoDate}&team1=${encodeURIComponent(m.home)}&team2=${encodeURIComponent(m.away)}`);
+        const data = await r.json();
+        if (!cancelled && data.fixtureId) setFixtureId(data.fixtureId);
+      } catch (e) { console.error("Fixture lookup error:", e); }
+    }
+    loadFixture();
+    return () => { cancelled = true; };
+  }, [selMatch?.id, selMatch?.isoDate, selMatch?.home, selMatch?.away]);
+
+  // 2. Une fois le fixture trouvé, récupère compositions + événements
+  useEffect(() => {
+    if (!fixtureId || !selMatch) return;
+    const m = selMatch;
+    let cancelled = false;
+
+    async function loadLineups() {
+      try {
+        const r = await fetch(`/api/apifootball?endpoint=lineups&fixture=${fixtureId}`);
+        const data = await r.json();
+        if (!cancelled && data.response && data.response.length === 2) {
+          const mapPos = (p) => p === "G" ? "GB" : p === "D" ? "DC" : p === "M" ? "MC" : "AT";
+          const toLineup = (team) => ({
+            formation: team.formation,
+            players: (team.startXI || []).map(s => ({
+              num: s.player.number,
+              n: s.player.name,
+              pos: mapPos(s.player.pos),
+            })),
+          });
+          setHomeLineup(toLineup(data.response[0]));
+          setAwayLineup(toLineup(data.response[1]));
+        }
+      } catch (e) { console.error("Lineups error:", e); }
+    }
+
+    async function loadEvents() {
+      try {
+        const r = await fetch(`/api/apifootball?endpoint=events&fixture=${fixtureId}`);
+        const data = await r.json();
+        if (!cancelled && data.response) {
+          const mapped = data.response.map(ev => ({
+            min: ev.time?.elapsed,
+            team: ev.team?.name === m.home ? "home" : "away",
+            player: ev.player?.name,
+            type: ev.type === "Goal" ? "goal" : ev.detail === "Yellow Card" ? "yellow" : ev.detail === "Red Card" ? "red" : "sub",
+          }));
+          setApiEvents(mapped);
+        }
+      } catch (e) { console.error("Events error:", e); }
+    }
+
+    loadLineups();
+    loadEvents();
+    return () => { cancelled = true; };
+  }, [fixtureId]);
+
   const days = [...new Set(matches.map(m=>m.day).filter(Boolean))].sort((a,b)=>a-b);
 
   const CAL = days.map(d => ({
@@ -604,80 +681,6 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
       "Norway-Senegal":[{year:2002,comp:"Phase de groupes",home:"Sénégal",hf:"🇸🇳",hs:1,as:1,away:"Danemark",af:"🇩🇰",note:"Phase groupes"}],
       "Argentina-Algeria":[{year:2026,comp:"Coupe du Monde 2026",home:"Argentine",hf:"🇦🇷",hs:3,as:0,away:"Algérie",af:"🇩🇿",note:"Messi hat-trick !"}],
     };
-
-    // ─── Compositions & événements réels — via API-Football (api-football.com) ───
-    const [homeLineup, setHomeLineup] = useState(null);
-    const [awayLineup, setAwayLineup] = useState(null);
-    const [apiEvents, setApiEvents] = useState([]);
-    const [fixtureId, setFixtureId] = useState(null);
-
-    // 1. Trouve le fixture id chez API-Football à partir de la date (ISO) + noms d'équipes
-    useEffect(() => {
-      setHomeLineup(null);
-      setAwayLineup(null);
-      setApiEvents([]);
-      setFixtureId(null);
-
-      // m.isoDate vient des vrais matchs API (football-data.org). Les matchs statiques de secours n'ont pas ce champ.
-      if (!m.isoDate) return;
-
-      let cancelled = false;
-      async function loadFixture() {
-        try {
-          const r = await fetch(`/api/apifootball?endpoint=find-fixture&date=${m.isoDate}&team1=${encodeURIComponent(m.home)}&team2=${encodeURIComponent(m.away)}`);
-          const data = await r.json();
-          if (!cancelled && data.fixtureId) setFixtureId(data.fixtureId);
-        } catch (e) { console.error("Fixture lookup error:", e); }
-      }
-      loadFixture();
-      return () => { cancelled = true; };
-    }, [m.id, m.isoDate, m.home, m.away]);
-
-    // 2. Une fois le fixture trouvé, récupère compositions + événements
-    useEffect(() => {
-      if (!fixtureId) return;
-      let cancelled = false;
-
-      async function loadLineups() {
-        try {
-          const r = await fetch(`/api/apifootball?endpoint=lineups&fixture=${fixtureId}`);
-          const data = await r.json();
-          if (!cancelled && data.response && data.response.length === 2) {
-            const mapPos = (p) => p === "G" ? "GB" : p === "D" ? "DC" : p === "M" ? "MC" : "AT";
-            const toLineup = (team) => ({
-              formation: team.formation,
-              players: (team.startXI || []).map(s => ({
-                num: s.player.number,
-                n: s.player.name,
-                pos: mapPos(s.player.pos),
-              })),
-            });
-            setHomeLineup(toLineup(data.response[0]));
-            setAwayLineup(toLineup(data.response[1]));
-          }
-        } catch (e) { console.error("Lineups error:", e); }
-      }
-
-      async function loadEvents() {
-        try {
-          const r = await fetch(`/api/apifootball?endpoint=events&fixture=${fixtureId}`);
-          const data = await r.json();
-          if (!cancelled && data.response) {
-            const mapped = data.response.map(ev => ({
-              min: ev.time?.elapsed,
-              team: ev.team?.name === m.home ? "home" : "away",
-              player: ev.player?.name,
-              type: ev.type === "Goal" ? "goal" : ev.detail === "Yellow Card" ? "yellow" : ev.detail === "Red Card" ? "red" : "sub",
-            }));
-            setApiEvents(mapped);
-          }
-        } catch (e) { console.error("Events error:", e); }
-      }
-
-      loadLineups();
-      loadEvents();
-      return () => { cancelled = true; };
-    }, [fixtureId]);
 
     const h2hKey = `${m.home}-${m.away}`;
     const h2hData = H2H[h2hKey] || H2H[`${m.away}-${m.home}`] || [];
