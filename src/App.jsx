@@ -219,6 +219,8 @@ function useLiveMatches() {
             id: `api-${m.id}`,
             day: utcDate ? utcDate.getDate() : null,
             date: utcDate ? utcDate.toLocaleDateString("fr-FR",{day:"numeric",month:"short"}) : "",
+            // Date ISO complète (avec année) — nécessaire pour interroger API-Football (compositions/événements)
+            isoDate: utcDate ? utcDate.toISOString().slice(0,10) : null,
             time: utcDate ? utcDate.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}) : "",
             group: groupLetter,
             home, away,
@@ -603,9 +605,79 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
       "Argentina-Algeria":[{year:2026,comp:"Coupe du Monde 2026",home:"Argentine",hf:"🇦🇷",hs:3,as:0,away:"Algérie",af:"🇩🇿",note:"Messi hat-trick !"}],
     };
 
-    // Compositions : uniquement via API, jamais de données statiques inventées
-    const homeLineup = null;
-    const awayLineup = null;
+    // ─── Compositions & événements réels — via API-Football (api-football.com) ───
+    const [homeLineup, setHomeLineup] = useState(null);
+    const [awayLineup, setAwayLineup] = useState(null);
+    const [apiEvents, setApiEvents] = useState([]);
+    const [fixtureId, setFixtureId] = useState(null);
+
+    // 1. Trouve le fixture id chez API-Football à partir de la date (ISO) + noms d'équipes
+    useEffect(() => {
+      setHomeLineup(null);
+      setAwayLineup(null);
+      setApiEvents([]);
+      setFixtureId(null);
+
+      // m.isoDate vient des vrais matchs API (football-data.org). Les matchs statiques de secours n'ont pas ce champ.
+      if (!m.isoDate) return;
+
+      let cancelled = false;
+      async function loadFixture() {
+        try {
+          const r = await fetch(`/api/apifootball?endpoint=find-fixture&date=${m.isoDate}&team1=${encodeURIComponent(m.home)}&team2=${encodeURIComponent(m.away)}`);
+          const data = await r.json();
+          if (!cancelled && data.fixtureId) setFixtureId(data.fixtureId);
+        } catch (e) { console.error("Fixture lookup error:", e); }
+      }
+      loadFixture();
+      return () => { cancelled = true; };
+    }, [m.id, m.isoDate, m.home, m.away]);
+
+    // 2. Une fois le fixture trouvé, récupère compositions + événements
+    useEffect(() => {
+      if (!fixtureId) return;
+      let cancelled = false;
+
+      async function loadLineups() {
+        try {
+          const r = await fetch(`/api/apifootball?endpoint=lineups&fixture=${fixtureId}`);
+          const data = await r.json();
+          if (!cancelled && data.response && data.response.length === 2) {
+            const mapPos = (p) => p === "G" ? "GB" : p === "D" ? "DC" : p === "M" ? "MC" : "AT";
+            const toLineup = (team) => ({
+              formation: team.formation,
+              players: (team.startXI || []).map(s => ({
+                num: s.player.number,
+                n: s.player.name,
+                pos: mapPos(s.player.pos),
+              })),
+            });
+            setHomeLineup(toLineup(data.response[0]));
+            setAwayLineup(toLineup(data.response[1]));
+          }
+        } catch (e) { console.error("Lineups error:", e); }
+      }
+
+      async function loadEvents() {
+        try {
+          const r = await fetch(`/api/apifootball?endpoint=events&fixture=${fixtureId}`);
+          const data = await r.json();
+          if (!cancelled && data.response) {
+            const mapped = data.response.map(ev => ({
+              min: ev.time?.elapsed,
+              team: ev.team?.name === m.home ? "home" : "away",
+              player: ev.player?.name,
+              type: ev.type === "Goal" ? "goal" : ev.detail === "Yellow Card" ? "yellow" : ev.detail === "Red Card" ? "red" : "sub",
+            }));
+            setApiEvents(mapped);
+          }
+        } catch (e) { console.error("Events error:", e); }
+      }
+
+      loadLineups();
+      loadEvents();
+      return () => { cancelled = true; };
+    }, [fixtureId]);
 
     const h2hKey = `${m.home}-${m.away}`;
     const h2hData = H2H[h2hKey] || H2H[`${m.away}-${m.home}`] || [];
@@ -804,7 +876,7 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
             </div>
           )}
 
-          {/* EVENTS style app foot */}
+          {/* EVENTS style app foot — alimenté par API-Football */}
           {dtab==="events" && (
             <div>
               {status==="upcoming" ? (
@@ -833,7 +905,7 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
                       </div>
                     </div>
                     {/* Buts en ligne */}
-                    {m.events?.filter(e=>e.type==="goal").map((e,i)=>(
+                    {apiEvents?.filter(e=>e.type==="goal").map((e,i)=>(
                       <div key={i} style={{
                         display:"flex",
                         justifyContent: e.team==="home" ? "flex-start" : "flex-end",
@@ -847,11 +919,11 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
                   </div>
 
                   {/* Timeline */}
-                  {(m.events||[]).length === 0 ? (
+                  {(apiEvents||[]).length === 0 ? (
                     <div style={{padding:30,textAlign:"center",color:T.grey,fontSize:13}}>Aucun événement</div>
                   ) : (
                     <div style={{padding:"6px 0"}}>
-                      {[...(m.events||[])].sort((a,b)=>b.min-a.min).map((e,i)=>{
+                      {[...(apiEvents||[])].sort((a,b)=>b.min-a.min).map((e,i)=>{
                         const isHome = e.team==="home";
                         const icon = e.type==="goal"?"⚽":e.type==="yellow"?"🟨":e.type==="red"?"🟥":"🔄";
                         return (
@@ -859,7 +931,7 @@ function PMatches({fav, liveData={}, matches=MATCHES}) {
                             display:"flex",
                             alignItems:"center",
                             padding:"10px 14px",
-                            borderBottom:i<(m.events||[]).length-1?`1px solid ${T.border}`:"none",
+                            borderBottom:i<(apiEvents||[]).length-1?`1px solid ${T.border}`:"none",
                           }}>
                             {isHome ? (
                               <>
